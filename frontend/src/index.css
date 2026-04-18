@@ -1,0 +1,44 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-brand-offwhite text-brand-slate antialiased font-sans;
+  }
+}
+
+@layer components {
+  /* Common UI Elements for consistency */
+  .btn-primary {
+    @apply bg-brand-indigo text-white px-8 py-4 rounded-2xl font-semibold shadow-soft hover:bg-opacity-90 transition-all focus:outline-none focus:ring-4 focus:ring-brand-indigo/30 active:scale-95;
+  }
+  
+  .btn-secondary {
+    @apply bg-white text-brand-slate border border-gray-200 px-8 py-4 rounded-2xl font-semibold shadow-sm hover:bg-gray-50 transition-all focus:outline-none focus:ring-4 focus:ring-gray-200 active:scale-95;
+  }
+
+  .card-container {
+    @apply bg-white rounded-[2rem] p-8 shadow-soft border border-gray-100;
+  }
+}
+
+@layer utilities {
+  /* High Contrast WCAG AAA Override Layer */
+  body.high-contrast *:not(.webgl-exclude, .webgl-exclude *) {
+    background-color: #000000 !important;
+    color: #FFFF00 !important;
+    border-color: #FFFFFF !important;
+    box-shadow: none !important;
+  }
+  
+  /* Fallback dim for avatar background to maintain 3D clarity if HC is on */
+  body.high-contrast .webgl-exclude {
+    background: #111111 !important;
+    border: 2px solid #FFFFFF !important;
+  }
+  
+  body.high-contrast {
+    background-color: #000000 !important;
+  }
+}
