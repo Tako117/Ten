@@ -41,7 +41,7 @@ export const AccessibilityProvider = ({ children }) => {
 
     if (learningProfile === 'dyslexia' || learningProfile === 'adhd') {
       try {
-        const response = await fetch('http://localhost:5000/api/adapt', {
+        const response = await fetch('/api/adapt', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ text: rawText, profile: learningProfile })

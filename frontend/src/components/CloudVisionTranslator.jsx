@@ -105,7 +105,7 @@ export default function CloudVisionTranslator() {
     setTranslatedText('');
 
     try {
-      const response = await fetch('http://localhost:5000/api/translate-vision', {
+      const response = await fetch('/api/translate-vision', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'

@@ -40,7 +40,7 @@ const Dashboard = () => {
         audioRef.current = null;
       }
       
-      const response = await fetch('http://localhost:5000/api/speak', {
+      const response = await fetch('/api/speak', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -162,7 +162,7 @@ const Dashboard = () => {
           formData.append('audio', audioBlob, 'recording.webm');
           formData.append('targetLanguage', i18n.language);
 
-          const response = await fetch('http://localhost:5000/api/translate', {
+          const response = await fetch('/api/translate', {
             method: 'POST',
             body: formData,
           });
@@ -215,7 +215,7 @@ const Dashboard = () => {
       formData.append('image', file);
       formData.append('targetLanguage', i18n.language);
 
-      const response = await fetch('http://localhost:5000/api/scan', {
+      const response = await fetch('/api/scan', {
         method: 'POST',
         body: formData,
       });
