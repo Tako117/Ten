@@ -5,6 +5,10 @@
       "destination": "https://ten-backend-qmpi.onrender.com/api/$1"
     },
     {
+      "source": "/pose-proxy/(.*)",
+      "destination": "https://us-central1-sign-mt.cloudfunctions.net/$1"
+    },
+    {
       "source": "/(.*)",
       "destination": "/index.html"
     }

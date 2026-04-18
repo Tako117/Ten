@@ -10,6 +10,11 @@ export default defineConfig({
       '/api': {
         target: 'http://localhost:5000',
         changeOrigin: true
+      },
+      '/pose-proxy': {
+        target: 'https://us-central1-sign-mt.cloudfunctions.net',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/pose-proxy/, '')
       }
     }
   }

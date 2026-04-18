@@ -19,7 +19,7 @@ export default function AvatarPlaceholder({ textToSign }) {
     const selectedLang = languageOptions[languagePair];
     // If no text, default to an idle "Welcome" sequence
     const text = isActive ? textToSign.trim() : 'Caspian Startup';
-    return `https://us-central1-sign-mt.cloudfunctions.net/spoken_text_to_signed_pose?spoken=${selectedLang.spoken}&signed=${selectedLang.signed}&text=${encodeURIComponent(text)}`;
+    return `/pose-proxy/spoken_text_to_signed_pose?spoken=${selectedLang.spoken}&signed=${selectedLang.signed}&text=${encodeURIComponent(text)}`;
   }, [textToSign, languagePair, isActive]);
 
   const showRoadmap = languagePair === 'kk-kvk' || languagePair === 'ru-rsl';
