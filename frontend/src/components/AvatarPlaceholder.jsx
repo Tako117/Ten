@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { PoseViewer } from 'react-pose-viewer';
 import { useTranslation } from 'react-i18next';
+import { API_BASE } from '../config';
 
 const languageOptions = {
   'en-ase': { labelKey: 'lang_en_asl', spoken: 'en', signed: 'ase' },
@@ -19,7 +20,7 @@ export default function AvatarPlaceholder({ textToSign }) {
     const selectedLang = languageOptions[languagePair];
     // If no text, default to an idle "Welcome" sequence
     const text = isActive ? textToSign.trim() : 'Caspian Startup';
-    return `/pose-proxy/spoken_text_to_signed_pose?spoken=${selectedLang.spoken}&signed=${selectedLang.signed}&text=${encodeURIComponent(text)}`;
+    return `${API_BASE}/pose-proxy/spoken_text_to_signed_pose?spoken=${selectedLang.spoken}&signed=${selectedLang.signed}&text=${encodeURIComponent(text)}`;
   }, [textToSign, languagePair, isActive]);
 
   const showRoadmap = languagePair === 'kk-kvk' || languagePair === 'ru-rsl';

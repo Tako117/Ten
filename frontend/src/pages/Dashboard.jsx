@@ -4,6 +4,7 @@ import { Mic, Camera, Loader2, Square, AlertCircle, Play, Pause, Square as StopI
 import { useTranslation } from 'react-i18next';
 import CloudVisionTranslator from '../components/CloudVisionTranslator';
 import { useAccessibility } from '../context/AccessibilityContext';
+import { API_BASE } from '../config';
 
 const Dashboard = () => {
   const { t, i18n } = useTranslation();
@@ -40,7 +41,7 @@ const Dashboard = () => {
         audioRef.current = null;
       }
       
-      const response = await fetch('/api/speak', {
+      const response = await fetch(`${API_BASE}/api/speak`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -162,7 +163,7 @@ const Dashboard = () => {
           formData.append('audio', audioBlob, 'recording.webm');
           formData.append('targetLanguage', i18n.language);
 
-          const response = await fetch('/api/translate', {
+          const response = await fetch(`${API_BASE}/api/translate`, {
             method: 'POST',
             body: formData,
           });
@@ -215,7 +216,7 @@ const Dashboard = () => {
       formData.append('image', file);
       formData.append('targetLanguage', i18n.language);
 
-      const response = await fetch('/api/scan', {
+      const response = await fetch(`${API_BASE}/api/scan`, {
         method: 'POST',
         body: formData,
       });

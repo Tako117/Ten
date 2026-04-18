@@ -70,4 +70,28 @@ router.post('/translate-vision', async (req, res) => {
   }
 });
 
+// GET /pose-proxy/*
+// Proxies sign language pose requests to sign-mt Cloud Functions server-side
+// (avoids CORS issues in the browser)
+router.get('/pose-proxy/*', async (req, res) => {
+  try {
+    // req.params[0] = everything after /pose-proxy/, query string preserved via req.url
+    const trailingPath = req.params[0];
+    const queryString = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
+    const targetUrl = `https://us-central1-sign-mt.cloudfunctions.net/${trailingPath}${queryString}`;
+
+    const upstream = await fetch(targetUrl);
+
+    // Forward the content-type so the browser receives binary pose data correctly
+    res.setHeader('Content-Type', upstream.headers.get('content-type') || 'application/octet-stream');
+
+    // Stream the binary pose data directly to the frontend
+    const buffer = await upstream.arrayBuffer();
+    res.send(Buffer.from(buffer));
+  } catch (error) {
+    console.error('Pose proxy error:', error);
+    res.status(502).json({ error: 'Pose proxy failed' });
+  }
+});
+
 export default router;

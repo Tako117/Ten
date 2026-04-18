@@ -1,4 +1,5 @@
 import React, { createContext, useState, useEffect, useContext } from 'react';
+import { API_BASE } from '../config';
 
 const AccessibilityContext = createContext();
 
@@ -41,7 +42,7 @@ export const AccessibilityProvider = ({ children }) => {
 
     if (learningProfile === 'dyslexia' || learningProfile === 'adhd') {
       try {
-        const response = await fetch('/api/adapt', {
+        const response = await fetch(`${API_BASE}/api/adapt`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ text: rawText, profile: learningProfile })
