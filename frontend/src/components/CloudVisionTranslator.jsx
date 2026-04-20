@@ -1,6 +1,7 @@
 import React, { useRef, useState, useEffect, useCallback } from 'react';
 import Webcam from 'react-webcam';
 import { Camera, RefreshCw, Loader2, Sparkles, Timer } from 'lucide-react';
+import { API_BASE } from '../config';
 
 const MAX_FRAMES = 5; // Capture exactly 5 frames spaced across 2.5s window
 const INTERVAL_MS = 500;
@@ -105,7 +106,7 @@ export default function CloudVisionTranslator() {
     setTranslatedText('');
 
     try {
-      const response = await fetch('/api/translate-vision', {
+      const response = await fetch(`${API_BASE}/api/translate-vision`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'

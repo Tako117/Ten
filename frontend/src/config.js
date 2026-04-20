@@ -1,6 +1,7 @@
 /**
  * API Base URL configuration.
- * In local dev (vite proxy), this is empty so relative paths like /api/... work.
- * In production (Render), VITE_API_BASE_URL is set to the backend URL.
+ * Dynamically switches between localhost and production Render domains.
  */
-export const API_BASE = import.meta.env.VITE_API_BASE_URL ?? '';
+export const API_BASE = window.location.hostname === 'localhost'
+  ? 'http://localhost:5000'
+  : 'https://ten-backend-k7kv.onrender.com';

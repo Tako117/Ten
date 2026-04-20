@@ -28,8 +28,8 @@ const AiTutorPanel = ({ lessonText }) => {
     setIsLoading(true);
     setChatHistory([]);
     try {
-      console.log("📡 [FRONTEND] Sending fetch to:", 'http://localhost:5000/api/ai-tutor');
-      const response = await fetch(`http://localhost:5000/api/ai-tutor`, {
+      console.log("📡 [FRONTEND] Sending fetch to:", `${API_BASE}/api/ai-tutor`);
+      const response = await fetch(`${API_BASE}/api/ai-tutor`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ lessonText }),
@@ -58,8 +58,8 @@ const AiTutorPanel = ({ lessonText }) => {
     setIsTyping(true);
 
     try {
-      console.log("📡 [FRONTEND] Sending fetch to:", 'http://localhost:5000/api/ai-tutor');
-      const response = await fetch(`http://localhost:5000/api/ai-tutor`, {
+      console.log("📡 [FRONTEND] Sending fetch to:", `${API_BASE}/api/ai-tutor`);
+      const response = await fetch(`${API_BASE}/api/ai-tutor`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ lessonText, userQuestion: userMsg.text }),
