@@ -1,13 +1,23 @@
 import OpenAI, { toFile } from 'openai';
+import { GoogleGenAI } from '@google/genai';
 import dotenv from 'dotenv';
 
 dotenv.config();
 
-// Initialize OpenAI conditionally. Will throw if used without key, but won't crash on startup.
+// Initialize OpenAI conditionally
 let openai;
 if (process.env.OPENAI_API_KEY) {
   openai = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY,
+  });
+}
+
+// Initialize Gemini conditionally
+let genAI;
+if (process.env.GEMINI_API_KEY) {
+  genAI = new GoogleGenAI({
+    apiKey: process.env.GEMINI_API_KEY,
+    apiVersion: 'v1'
   });
 }
 
@@ -19,12 +29,10 @@ export const translateAudio = async (req, res) => {
     if (!req.file) {
       return res.status(400).json({ error: 'No audio file provided' });
     }
-
     if (!openai) {
       return res.status(500).json({ error: 'OpenAI API key not configured' });
     }
 
-    // Convert buffer to file for OpenAI SDK
     const audioFile = await toFile(req.file.buffer, 'audio.webm', { type: req.file.mimetype });
 
     const transcription = await openai.audio.transcriptions.create({
@@ -47,21 +55,13 @@ export const scanImage = async (req, res) => {
     if (!req.file) {
       return res.status(400).json({ error: 'No image file provided' });
     }
-
     if (!openai) {
       return res.status(500).json({ error: 'OpenAI API key not configured for Vision usage.' });
     }
 
-    console.log('Sending image to OpenAI Vision API for OCR...');
-    
-    // Construct Base64 URI for OpenAI Image Upload
     const base64Image = req.file.buffer.toString('base64');
     const imageUrl = `data:${req.file.mimetype};base64,${base64Image}`;
-    const targetLanguage = req.body.targetLanguage || 'en';
 
-    // Note: The frontend is currently expecting a JSON-lines response block layout,
-    // sending a single final packet using the expected { text } chunk format works cleanly
-    // without breaking the fetch decode loop.
     res.setHeader('Content-Type', 'application/json-lines');
     res.setHeader('Transfer-Encoding', 'chunked');
 
@@ -71,7 +71,7 @@ export const scanImage = async (req, res) => {
       messages: [
         {
           role: "system",
-          content: "Extract the educational text from this image exactly in its original language. Do NOT translate it. You must return the output as a strict JSON object with two properties: `languageCode` (a valid BCP 47 language tag like 'en-US', 'kk-KZ', or 'ru-RU') and `text` (the extracted text)."
+          content: "Extract the educational text from this image exactly in its original language. Do NOT translate it. You must return the output as a strict JSON object with two properties: `languageCode` (a valid BCP 47 language tag) and `text` (the extracted text)."
         },
         {
           role: "user",
@@ -106,17 +106,9 @@ export const scanImage = async (req, res) => {
  */
 export const speakText = async (req, res) => {
   try {
-    const { text, languageCode } = req.body;
-
-    if (!text) {
-      return res.status(400).json({ error: 'No text provided for TTS' });
-    }
-
-    if (!openai) {
-      return res.status(500).json({ error: 'OpenAI API key not configured for TTS usage.' });
-    }
-
-    console.log('Sending text to OpenAI TTS API...');
+    const { text } = req.body;
+    if (!text) return res.status(400).json({ error: 'No text provided' });
+    if (!openai) return res.status(500).json({ error: 'OpenAI API key not configured' });
 
     const mp3Response = await openai.audio.speech.create({
       model: "tts-1",
@@ -125,48 +117,29 @@ export const speakText = async (req, res) => {
     });
 
     const buffer = Buffer.from(await mp3Response.arrayBuffer());
-
     res.setHeader('Content-Type', 'audio/mpeg');
-    res.setHeader('Content-Length', buffer.length);
     res.end(buffer);
-    
   } catch (error) {
     console.error('Neural TTS error:', error);
-    if (!res.headersSent) {
-      res.status(500).json({ error: 'Failed to generate audio via Neural TTS. ' + error.message });
-    }
+    res.status(500).json({ error: 'Failed to generate audio' });
   }
 };
 
 /**
- * Handles Text Adaptation for specific accessibility profiles using OpenAI
+ * Handles Text Adaptation using OpenAI
  */
 export const adaptContent = async (req, res) => {
   try {
     const { text, profile } = req.body;
+    if (!text || !profile || !openai) return res.status(400).json({ error: 'Missing requirements' });
 
-    if (!text || !profile) {
-      return res.status(400).json({ error: 'Text and profile are required.' });
-    }
-
-    if (!openai) {
-      return res.status(500).json({ error: 'OpenAI API key not configured.' });
-    }
-
-    // Only process if it's dyslexia or adhd, otherwise return original
     if (profile !== 'dyslexia' && profile !== 'adhd') {
       return res.status(200).json({ adaptedText: text, chunks: [] });
     }
 
-    let systemPrompt = '';
-    
-    if (profile === 'dyslexia') {
-      systemPrompt = "You are an accessibility aide. The user will provide text. Rewrite it into simple, short sentences that are easy to read for someone with Dyslexia. Keep the meaning exactly the same, but use extremely clear vocabulary. Output a JSON object with a single key 'adaptedText' containing your rewritten document as a single string.";
-    } else if (profile === 'adhd') {
-      systemPrompt = "You are an accessibility aide. The user will provide text. Fragment it into a step-by-step logical sequence of short, actionable bullet points optimized for someone with ADHD. Keep the meaning exactly the same. Output a JSON object with a single key 'chunks' containing an array of strings, where each string is one step or concept.";
-    }
-
-    console.log(`Sending text to OpenAI for adaptation (${profile})...`);
+    const systemPrompt = profile === 'dyslexia' 
+      ? "Rewrite into short, clear sentences for Dyslexia. Output JSON key 'adaptedText'." 
+      : "Fragment into logical bullet points for ADHD. Output JSON key 'chunks' as an array.";
 
     const aiResponse = await openai.chat.completions.create({
       model: "gpt-4o",
@@ -178,15 +151,74 @@ export const adaptContent = async (req, res) => {
     });
 
     const parsedData = JSON.parse(aiResponse.choices[0].message.content);
-
-    if (profile === 'dyslexia') {
-      res.status(200).json({ adaptedText: parsedData.adaptedText, chunks: [] });
-    } else {
-      res.status(200).json({ adaptedText: text, chunks: parsedData.chunks });
-    }
-
+    res.status(200).json(parsedData);
   } catch (error) {
-    console.error('Adaptation error:', error);
-    res.status(500).json({ error: 'Failed to adapt content. ' + error.message });
+    res.status(500).json({ error: error.message });
   }
+};
+
+/**
+ * Handles Lesson Summarization and Student Q&A using Google Gemini
+ */
+export const generateLessonSummary = async (req, res) => {
+  const { lessonText, userQuestion } = req.body;
+  const modelCandidates = ['models/gemini-2.0-flash', 'models/gemini-2.5-flash', 'models/gemini-flash-latest'];
+
+  // Primary Debugging Traces
+  console.log("📡 Request received at /api/ai-tutor");
+  console.log("📝 Lesson Text Received:", lessonText ? (lessonText.substring(0, 50) + "...") : "MISSING");
+  console.log("🔑 Using API Key:", process.env.GEMINI_API_KEY ? "EXISTS" : "MISSING");
+
+  if (!lessonText) return res.status(400).json({ error: 'Lesson text is required' });
+  if (!genAI) return res.status(500).json({ error: 'Gemini API key not configured' });
+
+  const promptText = !userQuestion 
+    ? `You are an encouraging educational tutor. Provide a 2-3 sentence summary and a section titled "Key Takeaways" with 3-5 bullet points. Lesson: ${lessonText}`
+    : `Using ONLY this lesson text: "${lessonText}", answer this question: ${userQuestion}. If the answer isn't there, say it isn't covered.`;
+
+  let lastError = null;
+
+  for (const modelId of modelCandidates) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
+
+    try {
+      console.log(`💎 SDK Request formatted, sending now to ${modelId}...`);
+
+      const response = await genAI.models.generateContent({
+        model: modelId,
+        contents: [{ role: 'user', parts: [{ text: promptText }] }],
+        config: { signal: controller.signal } 
+      });
+
+      clearTimeout(timeoutId);
+      const aiText = response.text;
+      console.log(`🎉 Success! Model: ${modelId}, Text length: ${aiText.length}`);
+      return res.json({ result: aiText });
+
+    } catch (error) {
+      clearTimeout(timeoutId);
+      lastError = error;
+      const errorMessage = error.name === 'AbortError' ? 'timeout' : error.message;
+      
+      // Handle Quota or Not Found by falling back
+      if (errorMessage.includes('429') || errorMessage.includes('404') || errorMessage === 'timeout') {
+        console.log(`⚠️ Fallback: Model ${modelId} failed (${errorMessage}). Trying next...`);
+        continue;
+      }
+
+      // For other critical errors, break and return
+      break;
+    }
+  }
+
+  // Final catch-all if all fallbacks fail
+  const isQuota = lastError?.message?.includes('429');
+  const responseStatus = isQuota ? 429 : 500;
+  const responseMessage = isQuota 
+    ? "The AI Tutor is currently over-capacity. Please wait 60 seconds and try again."
+    : `AI Tutor failed: ${lastError?.message}`;
+
+  console.log("❌ [BACKEND] All Gemini fallbacks exhausted.");
+  res.status(responseStatus).json({ error: "Gemini API Error", details: responseMessage });
 };

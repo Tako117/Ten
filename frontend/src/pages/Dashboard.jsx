@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next';
 import CloudVisionTranslator from '../components/CloudVisionTranslator';
 import { useAccessibility } from '../context/AccessibilityContext';
 import { API_BASE } from '../config';
+import AiTutorPanel from '../components/AiTutorPanel';
 
 const Dashboard = () => {
   const { t, i18n } = useTranslation();
@@ -18,7 +19,14 @@ const Dashboard = () => {
   // Content state
   const [lessonData, setLessonData] = useState({ originalText: '', adaptedText: '', chunks: [], profileUsed: 'none' });
   const [activeChunkIndex, setActiveChunkIndex] = useState(0);
-  
+
+  // Chunking pipeline state
+  const [activeChunk, setActiveChunk] = useState('');       // Current sentence shown as CC overlay
+  const [avatarText, setAvatarText] = useState('');         // English text fed to the Avatar API
+  const [signLanguage, setSignLanguage] = useState('ase');  // Selected sign language code
+  const [isSequenceRunning, setIsSequenceRunning] = useState(false);
+  const sequenceAbortRef = useRef(false);                   // Ref so abort is readable inside async loop
+
   // Legacy states for compatibility
   const [isRecording, setIsRecording] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -111,34 +119,131 @@ const Dashboard = () => {
     };
   }, []);
 
-  // START LESSON PIPELINE
-  const executeLessonPipeline = async (rawText) => {
+  // SEQUENTIAL CHUNKING PIPELINE
+  const executeLessonSequence = async (rawText, currentLanguage) => {
     if (!rawText.trim()) return;
+    sequenceAbortRef.current = false;
+    setIsSequenceRunning(true);
     setSessionState('PROCESSING');
     setSystemFeedback(`Adapting content for ${learningProfile} mode...`);
     setError(null);
+
     try {
+      // Step 1: Adapt content via AI profile engine
       const adapted = await processLessonContent(rawText);
       setLessonData(adapted);
-      
       setSessionState('ACTIVE_LESSON');
-      setSystemFeedback(`Live lesson in progress. Optimized for ${learningProfile.toUpperCase()}`);
-      setActiveChunkIndex(0);
-      
-      // Auto-play the adapted audio
-      if (adapted?.adaptedText) {
-        await handlePlayAudio(adapted.adaptedText);
+      setSystemFeedback(`Live lesson running. Optimized for ${learningProfile.toUpperCase()}`);
+
+      // Step 2: Split adapted text into sentence chunks
+      const textToChunk = adapted?.adaptedText || rawText;
+      // Only split at newlines and bullet points — preserves decimals like "4.1"
+      const chunks = textToChunk
+        .split(/(?:\r?\n|•)+/)
+        .map(c => c.trim())
+        .filter(c => c.length > 0);
+
+      // Step 3: Drive the avatar one chunk at a time
+      for (let i = 0; i < chunks.length; i++) {
+        if (sequenceAbortRef.current) break;
+
+        const chunk = chunks[i];
+        setActiveChunk(chunk);          // Show original text as CC overlay
+        setActiveChunkIndex(i);
+        setSystemFeedback(`Signing chunk ${i + 1} / ${chunks.length}`);
+
+        // Step 4: Frontend Translation (Replaces Backend API Call)
+        let processedChunk = chunk;
+        // If the chunk contains Cyrillic/Kazakh characters, translate to ENGLISH
+        if (/[А-Яа-яЁёӘәІіҢңҒғҮүҰұҚқӨө]/.test(chunk)) {
+            console.log("🌐 Translating chunk to English pivot...");
+            try {
+                const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=en&dt=t&q=${encodeURIComponent(chunk)}`;
+                const res = await fetch(url);
+                const data = await res.json();
+                processedChunk = data[0].map(item => item[0]).join('');
+            } catch (err) {
+                console.error("❌ Translation failed:", err);
+                processedChunk = ""; // Clear it to prevent crashing the pipeline
+            }
+        }
+
+        // Strip punctuation and force lowercase so sign.mt matches pure dictionary root words
+        const sanitizedForAvatar = processedChunk
+            .toLowerCase()
+            .replace(/[^\w\s]/g, '') // Remove all punctuation
+            .replace(/\s+/g, ' ')    // Normalize multiple spaces into one
+            .trim();
+
+        // Cyrillic Kill-Switch: Hard guard before rendering
+        if (/[А-Яа-яЁёӘәІіҢңҒғҮүҰұҚқӨө]/.test(sanitizedForAvatar) || !sanitizedForAvatar) {
+            console.error("🛑 Invalid or untranslated text detected! Aborting avatar render to prevent DataView crash.");
+            setActiveChunk(`⚠ Error: Could not translate "${chunk}" to English.`);
+            setSessionState('ERROR');
+            break; // Halt the sequence loop
+        }
+
+        // Step 5: Preflight the pose-proxy to catch sign.mt rejections before they
+        // silently freeze the avatar.
+        const poseUrl = `${API_BASE}/api/pose-proxy/spoken_text_to_signed_pose` +
+          `?spoken=en&signed=${signLanguage}&text=${encodeURIComponent(sanitizedForAvatar)}`;
+
+        let poseOk = false;
+        try {
+          const poseRes = await fetch(poseUrl);
+          if (!poseRes.ok) {
+            const rawServerMessage = await poseRes.text();
+            throw new Error(`sign.mt ${poseRes.status}: ${rawServerMessage}`);
+          }
+          poseOk = true;
+        } catch (poseErr) {
+          // Surface the exact rejection string in the CC overlay and halt the sequence
+          setActiveChunk(`⚠ API ERROR: ${poseErr.message}`);
+          setSystemFeedback('Avatar API rejected this chunk — sequence paused.');
+          break;
+        }
+
+        if (!poseOk) break; // safety guard
+
+        // Step 6: All clear — hand the English chunk to the avatar renderer
+        setAvatarText(sanitizedForAvatar);
+
+        // Step 7: Dynamic delay — 6s minimum. Add 1.5s per word, plus a character buffer for fingerspelling fallback
+        const wordCount = sanitizedForAvatar.split(/\s+/).length;
+        const charCount = sanitizedForAvatar.length;
+        const dynamicDuration = Math.max(6000, (wordCount * 1500) + (charCount * 100));
+        await new Promise(resolve => setTimeout(resolve, dynamicDuration));
+      }
+
+      // Only reset UI after the final animation timer has fully elapsed AND no abort was issued.
+      // sequenceAbortRef.current is checked after the await above, not before, so this is safe.
+      if (!sequenceAbortRef.current) {
+        setActiveChunk('');
+        setAvatarText('');
+        setSessionState('IDLE');
+        setSystemFeedback('Lesson complete.');
       }
     } catch (err) {
-      setError('Failed to adapt content.');
+      console.error('Lesson sequence error:', err);
+      setError('Failed to process lesson.');
       setSessionState('ERROR');
-      setSystemFeedback('Error during lesson setup.');
+      setSystemFeedback('Error during lesson.');
+    } finally {
+      setIsSequenceRunning(false);
     }
+  };
+
+  const stopSequence = () => {
+    sequenceAbortRef.current = true;
+    setIsSequenceRunning(false);
+    setActiveChunk('');
+    setAvatarText('');
+    handleStop();
   };
 
   // INPUT METHODS
   const handleManualStart = () => {
-    executeLessonPipeline(manualText);
+    executeLessonSequence(manualText, i18n.language);
   };
 
   const handleStartRecording = async () => {
@@ -172,7 +277,7 @@ const Dashboard = () => {
           if (!response.ok) throw new Error(data.error || 'Failed to translate');
 
           setManualText(data.text);
-          executeLessonPipeline(data.text);
+          executeLessonSequence(data.text, i18n.language);
 
         } catch (err) {
           setError(err.message);
@@ -249,7 +354,7 @@ const Dashboard = () => {
       }
 
       setManualText(finalResultText);
-      executeLessonPipeline(finalResultText);
+      executeLessonSequence(finalResultText, i18n.language);
 
     } catch (err) {
       setError(err.message);
@@ -259,9 +364,13 @@ const Dashboard = () => {
   };
 
   const resetSession = () => {
+    sequenceAbortRef.current = true;
     setSessionState('IDLE');
     setSystemFeedback('Idle - Ready to start lesson');
     setError(null);
+    setActiveChunk('');
+    setAvatarText('');
+    setIsSequenceRunning(false);
     handleStop();
   };
 
@@ -286,10 +395,10 @@ const Dashboard = () => {
       </div>
 
       {translationMode === 'textToAsl' ? (
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-10 h-full min-h-[75vh] items-start">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 w-full">
 
-        {/* Left Column - Input & Processing */}
-        <div className="lg:col-span-4 flex flex-col gap-6 order-2 lg:order-1">
+        {/* Left Column (Inputs & State) */}
+        <div className="lg:col-span-4 space-y-6 flex flex-col order-2 lg:order-1">
 
           {/* Input Controls */}
           <div className={`flex flex-col gap-5 transition-opacity duration-300 ${(sessionState !== 'IDLE' && sessionState !== 'ERROR') ? 'opacity-50 pointer-events-none' : 'opacity-100'}`}>
@@ -373,106 +482,137 @@ const Dashboard = () => {
 
         </div>
 
-        {/* Right Column - Unified Presenter (Structural Consistency) */}
-        <div className="lg:col-span-8 order-1 lg:order-2 h-[600px] sm:h-[80vh] w-full bg-white rounded-[2rem] border border-slate-100 shadow-[0_20px_40px_-15px_rgba(0,0,0,0.05)] overflow-hidden flex flex-col relative">
+        {/* Right Column (Outputs: Avatar & Tutor) */}
+        <div className="lg:col-span-8 space-y-6 flex flex-col order-1 lg:order-2">
           
-          {/* Output Header */}
-          <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50/50 backdrop-blur-sm z-10 shrink-0">
-             <div className="flex items-center gap-2">
-                <div className={`w-2 h-2 rounded-full ${sessionState === 'ACTIVE_LESSON' ? 'bg-emerald-500 animate-pulse' : 'bg-slate-300'}`}></div>
-                <span className="text-sm font-bold text-slate-600">Lesson Presenter</span>
-             </div>
-             {sessionState === 'ACTIVE_LESSON' && (
-               <button onClick={resetSession} className="text-xs font-bold text-slate-400 hover:text-slate-600">End Session</button>
-             )}
-          </div>
+          {/* Lesson Presenter Card */}
+          <div className="h-[600px] sm:h-[80vh] w-full bg-slate-900 rounded-[2rem] border border-slate-800 shadow-[0_20px_40px_-15px_rgba(0,0,0,0.3)] overflow-hidden flex flex-col relative">
+            {/* Output Header */}
+            <div className="px-6 py-4 border-b border-slate-800 flex justify-between items-center bg-slate-900/80 backdrop-blur-sm z-10 shrink-0">
+              <div className="flex items-center gap-2">
+                <div className={`w-2 h-2 rounded-full transition-colors ${
+                  isSequenceRunning ? 'bg-emerald-400 animate-pulse' :
+                  sessionState === 'ACTIVE_LESSON' ? 'bg-emerald-400' :
+                  sessionState === 'PROCESSING' ? 'bg-amber-400 animate-pulse' : 'bg-slate-600'
+                }`} />
+                <span className="text-sm font-bold text-slate-300">Lesson Presenter</span>
+                {isSequenceRunning && (
+                  <span className="text-xs text-slate-500 font-medium ml-1">{systemFeedback}</span>
+                )}
+              </div>
+              <div className="flex items-center gap-3">
+                <select 
+                    value={signLanguage} 
+                    onChange={(e) => setSignLanguage(e.target.value)}
+                    className="bg-gray-800 text-white rounded px-3 py-1 text-sm border border-gray-700 focus:outline-none focus:border-gray-500"
+                >
+                    <option value="ase">American Sign Language (ASL)</option>
+                    <option value="rsl">Russian Sign Language (RSL)</option>
+                    <option value="kvk" disabled>Kazakh Sign Language (KVK) - Coming Soon</option>
+                </select>
+                {(sessionState === 'ACTIVE_LESSON' || isSequenceRunning) && (
+                  <button
+                    onClick={stopSequence}
+                    className="text-xs font-bold text-rose-400 hover:text-rose-300 border border-rose-800 hover:border-rose-600 px-3 py-1 rounded-lg transition-colors shadow-sm"
+                  >
+                    End Session
+                  </button>
+                )}
+              </div>
+            </div>
 
-          <div className="flex-1 overflow-hidden flex flex-col">
-            {sessionState === 'IDLE' && (
-               <div className="m-auto text-center p-8 max-w-sm">
-                 <Layers className="w-16 h-16 text-slate-200 mx-auto mb-6" />
-                 <h3 className="text-xl font-bold text-slate-700 mb-2">Awaiting Lesson Input</h3>
-                 <p className="text-slate-500 text-sm">Provide text, speak, or scan a textbook to generate an adaptive lesson.</p>
-               </div>
-            )}
-            
-            {sessionState === 'PROCESSING' && (
-               <div className="m-auto text-center p-8">
-                 <Loader2 className="w-12 h-12 text-indigo-500 animate-spin mx-auto mb-6" />
-                 <h3 className="text-lg font-bold text-slate-700 mb-2">Generating...</h3>
-                 <p className="text-slate-500 text-sm">{systemFeedback}</p>
-               </div>
-            )}
+            {/* Avatar Full-Canvas Area */}
+            <div className="flex-1 relative overflow-hidden">
+              {/* IDLE State */}
+              {sessionState === 'IDLE' && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center text-center p-8">
+                  <Layers className="w-16 h-16 text-slate-700 mx-auto mb-6" />
+                  <h3 className="text-xl font-bold text-slate-400 mb-2">Awaiting Lesson Input</h3>
+                  <p className="text-slate-600 text-sm">Provide text, speak, or scan a textbook to begin.</p>
+                </div>
+              )}
 
-            {sessionState === 'ACTIVE_LESSON' && (
-               <div className="flex-1 flex flex-col h-full overflow-y-auto w-full relative">
-                 {/* AVATAR LAYER */}
-                 <div className={`w-full transition-all duration-500 flex-shrink-0 bg-slate-50
-                   ${learningProfile === 'hearing' ? 'h-2/3' : 'h-1/3 border-b border-slate-100 bg-slate-100/50'}
-                 `}>
-                    <React.Suspense fallback={<div className="flex justify-center items-center h-full"><Loader2 className="w-8 h-8 animate-spin text-indigo-500" /></div>}>
-                      <AvatarPlaceholder textToSign={lessonData.adaptedText} />
+              {/* PROCESSING State */}
+              {sessionState === 'PROCESSING' && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center text-center p-8">
+                  <Loader2 className="w-12 h-12 text-indigo-400 animate-spin mx-auto mb-6" />
+                  <h3 className="text-lg font-bold text-slate-300 mb-2">Generating Lesson...</h3>
+                  <p className="text-slate-500 text-sm">{systemFeedback}</p>
+                </div>
+              )}
+
+              {/* ERROR State */}
+              {sessionState === 'ERROR' && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center text-center p-8">
+                  <AlertCircle className="w-12 h-12 text-rose-500 mx-auto mb-4" />
+                  <h3 className="text-lg font-bold text-slate-300 mb-2">Something went wrong</h3>
+                  <p className="text-slate-500 text-sm mb-4">{error}</p>
+                  <button onClick={resetSession} className="flex items-center gap-2 text-sm font-bold text-slate-300 bg-slate-800 border border-slate-700 px-4 py-2 rounded-xl hover:bg-slate-700">
+                    <RefreshCw className="w-4 h-4" /> Retry
+                  </button>
+                </div>
+              )}
+
+              {/* ACTIVE LESSON: Avatar canvas fills the right panel completely */}
+              {sessionState === 'ACTIVE_LESSON' && (
+                <>
+                  <div className="absolute inset-0">
+                    <React.Suspense fallback={
+                      <div className="flex justify-center items-center h-full">
+                        <Loader2 className="w-8 h-8 animate-spin text-indigo-400" />
+                      </div>
+                    }>
+                      <AvatarPlaceholder textToSign={avatarText} signLanguage={signLanguage} />
                     </React.Suspense>
-                 </div>
+                  </div>
 
-                 {/* TEXT / AUDIO LAYER */}
-                 <div className={`flex-1 p-6 flex flex-col overflow-y-auto max-h-[400px] bg-white 
-                    ${learningProfile === 'dyslexia' ? 'text-xl leading-loose font-medium selection:bg-yellow-200' : 'text-base font-normal'}
-                 `}>
-                    <div className="flex-1">
-                      {learningProfile === 'adhd' && lessonData.chunks.length > 0 ? (
-                        <div className="flex flex-col gap-4">
-                           {lessonData.chunks.map((chunk, idx) => (
-                              <div key={idx} className={`p-5 rounded-2xl border transition-all duration-300 
-                                ${idx === activeChunkIndex ? 'border-indigo-400 bg-indigo-50 shadow-md transform scale-[1.01]' : 'border-slate-100 bg-white opacity-50'}`}>
-                                <div className="flex items-start gap-4">
-                                  <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold shrink-0 mt-0.5
-                                    ${idx === activeChunkIndex ? 'bg-indigo-500 text-white' : 'bg-slate-200 text-slate-500'}`}>
-                                    {idx + 1}
-                                  </div>
-                                  <p className={`text-slate-800 ${idx === activeChunkIndex ? 'font-semibold' : ''}`}>{chunk}</p>
-                                </div>
-                              </div>
-                           ))}
-                        </div>
-                      ) : (
-                        <p className={`text-slate-700 whitespace-pre-wrap leading-relaxed ${learningProfile === 'dyslexia' ? 'tracking-wide max-w-3xl mx-auto' : ''}`}>
-                          {lessonData.adaptedText}
-                        </p>
-                      )}
+                  {activeChunk ? (
+                    <div className="absolute bottom-0 left-0 right-0 z-20 px-6 py-5 bg-black/80 backdrop-blur-md border-t border-white/10">
+                      <p className={`text-white text-center leading-relaxed whitespace-pre-wrap ${
+                        learningProfile === 'dyslexia' ? 'text-xl font-medium tracking-wide' : 'text-base font-semibold'
+                      }`}>
+                        {activeChunk}
+                      </p>
+                      <div className="flex justify-center gap-1.5 mt-3">
+                        {lessonData?.adaptedText && <span className="text-xs text-slate-400 font-medium">{systemFeedback}</span>}
+                      </div>
                     </div>
-                 </div>
-                 
-                 {/* Audio Controls */}
-                 <div className="mt-auto px-6 py-4 border-t border-slate-100 bg-white flex items-center justify-between shrink-0 sticky bottom-0">
-                    <div className="flex gap-2">
-                      {isPlaying ? (
-                        <button onClick={handlePause} className="w-10 h-10 flex items-center justify-center rounded-xl bg-slate-100 hover:bg-slate-200 transition-colors shadow-sm text-slate-700">
-                          <Pause className="w-5 h-5 fill-current" />
-                        </button>
-                      ) : (
-                        <button onClick={() => handlePlayAudio(lessonData.adaptedText)} className="w-10 h-10 flex items-center justify-center rounded-xl bg-indigo-500 hover:bg-indigo-600 transition-colors shadow-sm text-white">
-                          <Play className="w-5 h-5 fill-current ml-1" />
-                        </button>
-                      )}
-                      <button onClick={handleStop} className="w-10 h-10 flex items-center justify-center rounded-xl bg-white border border-slate-200 hover:bg-rose-50 hover:text-rose-500 transition-colors shadow-sm text-slate-500">
-                        <StopIcon className="w-4 h-4 fill-current" />
+                  ) : (
+                    <div className="absolute bottom-0 left-0 right-0 z-20 px-6 py-3 bg-black/40 backdrop-blur-sm border-t border-white/5">
+                      <p className="text-slate-500 text-center text-xs font-medium">Lesson complete</p>
+                    </div>
+                  )}
+
+                  <div className="absolute top-4 left-4 z-30 flex items-center gap-2 bg-black/50 backdrop-blur-md border border-white/10 rounded-2xl px-3 py-2">
+                    {isPlaying ? (
+                      <button onClick={handlePause} className="w-8 h-8 flex items-center justify-center rounded-xl bg-white/10 hover:bg-white/20 transition-colors text-white">
+                        <Pause className="w-4 h-4 fill-current" />
                       </button>
-                    </div>
-                    
-                    <div className="flex items-center gap-3 bg-slate-50 px-3 py-1.5 rounded-lg border border-slate-100">
-                      <Volume2 className="w-4 h-4 text-slate-400" />
-                      <input 
-                        type="range" min="0.5" max="2.0" step="0.1" 
+                    ) : (
+                      <button onClick={() => handlePlayAudio(lessonData.adaptedText)} className="w-8 h-8 flex items-center justify-center rounded-xl bg-indigo-500 hover:bg-indigo-600 transition-colors text-white">
+                        <Play className="w-4 h-4 fill-current ml-0.5" />
+                      </button>
+                    )}
+                    <button onClick={handleStop} className="w-8 h-8 flex items-center justify-center rounded-xl bg-white/10 hover:bg-rose-500/30 hover:text-rose-400 transition-colors text-slate-400">
+                      <StopIcon className="w-3.5 h-3.5 fill-current" />
+                    </button>
+                    <div className="flex items-center gap-2 pl-1 border-l border-white/10">
+                      <Volume2 className="w-3.5 h-3.5 text-slate-400" />
+                      <input
+                        type="range" min="0.5" max="2.0" step="0.1"
                         value={audioSpeed} onChange={(e) => handleSpeedChange(parseFloat(e.target.value))}
-                        className="w-20 accent-indigo-500 h-1"
+                        className="w-16 accent-indigo-400 h-1"
                       />
-                      <span className="text-xs font-bold text-slate-500 w-6 text-right">{audioSpeed}x</span>
+                      <span className="text-xs font-bold text-slate-400 w-6">{audioSpeed}x</span>
                     </div>
                   </div>
-               </div>
-            )}
+                </>
+              )}
+            </div>
           </div>
+
+          {/* AI Tutor Panel stacking cleanly below */}
+          <AiTutorPanel lessonText={lessonData.originalText} className="w-full" />
         </div>
 
       </div>

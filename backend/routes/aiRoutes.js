@@ -1,7 +1,7 @@
 import express from 'express';
 import multer from 'multer';
 import OpenAI from 'openai';
-import { translateAudio, scanImage, speakText, adaptContent } from '../controllers/aiController.js';
+import { translateAudio, scanImage, speakText, adaptContent, generateLessonSummary } from '../controllers/aiController.js';
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
@@ -26,6 +26,10 @@ router.post('/speak', express.json(), speakText);
 // POST /api/adapt
 // Accepts text and profile to return simplified structures
 router.post('/adapt', express.json(), adaptContent);
+
+// POST /api/ai-tutor
+// Accepts lessonText and optional userQuestion for summarization and Q&A
+router.post('/ai-tutor', express.json(), generateLessonSummary);
 
 // POST /api/translate-vision
 // Accepts massive base64 array payloads from CloudVisionTranslator and routes to external inference
@@ -67,6 +71,79 @@ router.post('/translate-vision', async (req, res) => {
   } catch (error) {
     console.error("OpenAI Vision Pipeline processing failed: ", error);
     res.status(500).json({ error: "Vision API processing failed" });
+  }
+});
+
+// POST /api/translate-to-en
+// Accepts { text: "..." } and returns the English translation.
+// Uses native Node fetch to the open GTX endpoint — zero API keys, zero npm dependencies.
+// Response key is { englishText } to match data.englishText in Dashboard.jsx.
+router.post('/translate-to-en', express.json(), async (req, res) => {
+  console.log("=========================================");
+  console.log("🚀 NATIVE TRANSLATION ROUTE FIRING");
+  console.log("Translating text:", req.body.text);
+  console.log("=========================================");
+
+  try {
+    const textToTranslate = req.body.text;
+    if (!textToTranslate || !textToTranslate.trim()) {
+      return res.status(400).json({ error: 'No text provided.' });
+    }
+
+    // Native fetch to the open GTX endpoint (Zero API keys required)
+    const url =
+      `https://translate.googleapis.com/translate_a/single` +
+      `?client=gtx&sl=auto&tl=en&dt=t&q=${encodeURIComponent(textToTranslate.trim())}`;
+
+    const response = await fetch(url);
+    if (!response.ok) {
+      const errBody = await response.text();
+      throw new Error(`Google Translate ${response.status}: ${errBody}`);
+    }
+    const data = await response.json();
+
+    // Google returns a nested array: data[0] = [[translatedSegment, original, ...], ...]
+    // Join all segments to reconstruct the full translated sentence.
+    const translatedText = data[0].map(item => item[0]).join('');
+
+    console.log("✅ Translation successful:", translatedText);
+    // CRITICAL: key must be { englishText } — matches data.englishText in Dashboard.jsx
+    res.json({ englishText: translatedText });
+  } catch (error) {
+    console.error("❌ Native Fetch Failed:", error);
+    res.status(500).json({ error: 'Native translation failed' });
+  }
+});
+
+// POST /api/translate-to-gloss
+// Accepts { text: "Hello, how are you?" } (English) and returns the ASL gloss string.
+// ASL gloss is fed to the sign.mt Avatar API so it signs correctly without freezing.
+router.post('/translate-to-gloss', express.json(), async (req, res) => {
+  try {
+    const { text } = req.body;
+    if (!text || !text.trim()) {
+      return res.status(400).json({ error: 'No text provided.' });
+    }
+
+    const response = await openai.chat.completions.create({
+      model: 'gpt-4o',
+      messages: [
+        {
+          role: 'system',
+          content:
+            'You are an expert American Sign Language (ASL) translator. Convert the following English sentence into an ASL gloss. Output ONLY the capitalized root words in the correct ASL grammar structure. Do not use punctuation. Output ONLY the gloss string.',
+        },
+        { role: 'user', content: text.trim() },
+      ],
+      max_tokens: 100,
+      temperature: 0.1,
+    });
+
+    const gloss = response.choices[0].message.content.trim();
+    res.json({ gloss });
+  } catch (error) {
+    console.error('ASL gloss translation error:', error);
+    res.status(500).json({ error: 'ASL gloss translation failed.' });
   }
 });
 

@@ -6,6 +6,7 @@ import Students from './pages/Students';
 import Teachers from './pages/Teachers';
 import Parents from './pages/Parents';
 import A11yToolbar from './components/A11yToolbar';
+import logo from './assets/logo.png';
 
 function App() {
   const { t } = useTranslation();
@@ -17,7 +18,9 @@ function App() {
         <header className="px-8 py-6 flex justify-between items-center max-w-7xl mx-auto w-full">
           <div className="flex items-center gap-2">
             <Link to="/" className="flex items-center gap-2 group">
-              <div className="w-8 h-8 rounded-full bg-brand-indigo flex items-center justify-center text-white font-bold text-xl leading-none pt-0.5 group-hover:scale-105 transition-transform" aria-hidden="true">Teñ</div>
+              <div className="w-10 h-10 flex items-center justify-center group-hover:scale-105 transition-transform" aria-hidden="true">
+                <img src={logo} alt="Teñ Logo" className="w-full h-full object-contain" />
+              </div>
               <span className="font-bold text-xl tracking-tight text-brand-slate group-hover:text-brand-indigo transition-colors">Teñ Inclusive AI</span>
             </Link>
           </div>
